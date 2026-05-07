@@ -120,6 +120,37 @@ class CreatePurchaseOrderRequest(BaseModel):
     expected_delivery_date: str
     notes: Optional[str] = None
 
+class Task(BaseModel):
+    id: str
+    title: str
+    priority: str
+    dueDate: str
+    status: str
+
+class CreateTaskRequest(BaseModel):
+    title: str
+    priority: str
+    dueDate: str
+    status: str = "pending"
+
+# In-memory task store (reset on server restart, consistent with mock-data pattern)
+_tasks: List[dict] = []
+_task_counter = 1000
+
+class RestockingSuggestion(BaseModel):
+    item_sku: str
+    item_name: str
+    current_demand: int
+    forecasted_demand: int
+    trend: str
+    period: str
+    unit_cost: float
+    recommended_quantity: int
+
+class RestockingOrderRequest(BaseModel):
+    items: List[dict]
+    warehouse: str = "San Francisco"
+
 # API endpoints
 @app.get("/")
 def root():
@@ -303,6 +334,78 @@ def get_monthly_trends():
     result = list(months.values())
     result.sort(key=lambda x: x['month'])
     return result
+
+@app.get("/api/restocking/suggestions", response_model=List[RestockingSuggestion])
+def get_restocking_suggestions():
+    """Get demand-based restocking suggestions enriched with inventory unit costs"""
+    inventory_by_sku = {item["sku"]: item for item in inventory_items}
+    results = []
+    for forecast in demand_forecasts:
+        if forecast["trend"] != "increasing":
+            continue
+        inv_item = inventory_by_sku.get(forecast["item_sku"])
+        if not inv_item:
+            continue  # skip forecasts with no matching inventory cost data
+        recommended_qty = max(forecast["forecasted_demand"] - forecast["current_demand"], 0)
+        results.append({
+            **forecast,
+            "unit_cost": inv_item["unit_cost"],
+            "recommended_quantity": recommended_qty
+        })
+    results.sort(key=lambda x: x["forecasted_demand"], reverse=True)
+    return results
+
+@app.post("/api/restocking/orders", response_model=Order)
+def create_restocking_order(request: RestockingOrderRequest):
+    """Create a restocking order from selected suggestions; appends to in-memory orders list"""
+    from datetime import datetime, timedelta
+    now = datetime.now()
+    new_id = str(len(orders) + 1)
+    order_number = f"RST-{now.year}-{int(new_id):04d}"
+    total = sum(item.get("quantity", 0) * item.get("unit_price", 0) for item in request.items)
+    new_order = {
+        "id": new_id,
+        "order_number": order_number,
+        "customer": "Restocking Order",
+        "items": request.items,
+        "status": "Processing",
+        "warehouse": request.warehouse,
+        "category": request.items[0].get("category", "Mixed") if request.items else "Mixed",
+        "order_date": now.isoformat(),
+        "expected_delivery": (now + timedelta(days=14)).isoformat(),
+        "total_value": round(total, 2)
+    }
+    orders.append(new_order)
+    return new_order
+
+@app.get("/api/tasks", response_model=List[Task])
+def get_tasks():
+    return _tasks
+
+@app.post("/api/tasks", response_model=Task, status_code=201)
+def create_task(request: CreateTaskRequest):
+    global _task_counter
+    _task_counter += 1
+    task = {"id": str(_task_counter), **request.dict()}
+    _tasks.append(task)
+    return task
+
+@app.delete("/api/tasks/{task_id}")
+def delete_task(task_id: str):
+    global _tasks
+    task = next((t for t in _tasks if t["id"] == task_id), None)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    _tasks = [t for t in _tasks if t["id"] != task_id]
+    return {"deleted": task_id}
+
+@app.patch("/api/tasks/{task_id}", response_model=Task)
+def toggle_task(task_id: str):
+    task = next((t for t in _tasks if t["id"] == task_id), None)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    task["status"] = "completed" if task["status"] == "pending" else "pending"
+    return task
 
 if __name__ == "__main__":
     import uvicorn

@@ -27,6 +27,42 @@
         </div>
       </div>
 
+      <div v-if="restockingOrders.length > 0" class="card">
+        <div class="card-header">
+          <h3 class="card-title">
+            Submitted Restocking Orders
+            <span class="section-note">(14-day lead time)</span>
+          </h3>
+        </div>
+        <div class="table-container">
+          <table class="orders-table">
+            <thead>
+              <tr>
+                <th>Order #</th>
+                <th>Submitted</th>
+                <th>Items</th>
+                <th>Total</th>
+                <th>Expected Delivery</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="order in restockingOrders" :key="order.id">
+                <td><strong>{{ order.order_number }}</strong></td>
+                <td>{{ formatDate(order.order_date) }}</td>
+                <td>{{ order.items.length }} item(s)</td>
+                <td>{{ currencySymbol }}{{ order.total_value.toLocaleString() }}</td>
+                <td>
+                  {{ formatDate(order.expected_delivery) }}
+                  <div class="lead-time-note">+ 14 days</div>
+                </td>
+                <td><span class="badge warning">Processing</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div class="card">
         <div class="card-header">
           <h3 class="card-title">{{ t('orders.allOrders') }} ({{ orders.length }})</h3>
@@ -129,6 +165,10 @@ export default {
       loadOrders()
     })
 
+    const restockingOrders = computed(() => {
+      return orders.value.filter(order => order.order_number.startsWith('RST-'))
+    })
+
     const getOrdersByStatus = (status) => {
       return orders.value.filter(order => order.status === status)
     }
@@ -160,6 +200,7 @@ export default {
       loading,
       error,
       orders,
+      restockingOrders,
       getOrdersByStatus,
       getOrderStatusClass,
       formatDate,
@@ -275,5 +316,18 @@ export default {
 .item-meta {
   font-size: 0.813rem;
   color: #64748b;
+}
+
+.lead-time-note {
+  font-size: 0.75rem;
+  color: #64748b;
+  margin-top: 0.125rem;
+}
+
+.section-note {
+  font-size: 0.813rem;
+  color: #64748b;
+  font-weight: 400;
+  margin-left: 0.5rem;
 }
 </style>
